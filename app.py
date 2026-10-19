@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from typing import List, TypedDict
 
 import streamlit as st
@@ -16,170 +15,144 @@ load_dotenv()
 st.set_page_config(page_title="Osho Chatbot", page_icon="🕉️", layout="wide")
 
 @st.cache_resource
-def load_vectorstore():
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+def load_vs():
+    emb = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     try:
-        return FAISS.load_local("data/vectorstore", embeddings, allow_dangerous_deserialization=True)
-    except Exception as e:
-        st.error(f"Vector store not found. Run indexing first. ({e})")
+        return FAISS.load_local("data/vectorstore", emb, allow_dangerous_deserialization=True)
+    except Exception:
         return None
 
 
 @st.cache_resource
 def get_llm():
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        st.error("Set GROQ_API_KEY in .env")
+    key = os.getenv("GROQ_API_KEY")
+    if not key:
         return None
-    return ChatGroq(model="llama-3.1-8b-instant", temperature=0.3, api_key=api_key)
+    return ChatGroq(model="llama-3.1-8b-instant", temperature=0.1, api_key=key)
 
 
-vectorstore = load_vectorstore()
+vectorstore = load_vs()
 llm = get_llm()
 
 
 class GraphState(TypedDict):
     question: str
+    language: str
     documents: List[Document]
     answer: str
-    sources: List[dict]
-    needs_evidence: bool
-    evidence: str
+    references: List[dict]
 
 
 def retrieve(state: GraphState):
     if not vectorstore:
-        return {"documents": [], "sources": []}
-    docs = vectorstore.similarity_search(state["question"], k=5)
-    sources = []
-    for doc in docs:
-        sources.append({
-            "title": doc.metadata.get("title", "Unknown"),
-            "url": doc.metadata.get("source", ""),
-            "local_audio": doc.metadata.get("local_audio", ""),
-            "relative_audio": doc.metadata.get("relative_audio", ""),
-            "audio_url": doc.metadata.get("audio_url", ""),
-            "snippet": doc.page_content[:400] + "...",
-            "language": doc.metadata.get("language", ""),
+        return {"documents": [], "references": []}
+    # Filter by language if possible
+    lang = state.get("language", "english")
+    docs = vectorstore.similarity_search(state["question"], k=6)
+    filtered = [d for d in docs if d.metadata.get("language", "").lower() == lang]
+    if not filtered:
+        filtered = docs  # fallback
+    refs = []
+    for d in filtered[:4]:
+        refs.append({
+            "title": d.metadata.get("title", ""),
+            "url": d.metadata.get("url", ""),
+            "series": d.metadata.get("series", ""),
+            "excerpt": d.page_content[:600] + ("..." if len(d.page_content) > 600 else ""),
+            "language": d.metadata.get("language", ""),
         })
-    return {"documents": docs, "sources": sources}
+    return {"documents": filtered[:4], "references": refs}
 
 
 def generate(state: GraphState):
+    """Faithful, readable answer. Strict instruction not to add external psychology or alter essence."""
     context = "\n\n---\n\n".join(
-        f"Title: {doc.metadata.get('title', 'Discourse')}\n{doc.page_content}"
-        for doc in state["documents"]
+        f"Discourse: {d.metadata.get('title','')}\nURL: {d.metadata.get('url','')}\n{d.page_content}"
+        for d in state["documents"]
     )
-    prompt = ChatPromptTemplate.from_template(
-        """You are an Osho chatbot. Answer using ONLY the provided context from Osho's discourses.
-Be insightful and in the spirit of Osho. Cite the discourse title(s).
+    prompt = ChatPromptTemplate.from_template("""
+You are an Osho discourse assistant. Your only job is to present Osho's words clearly.
+
+STRICT RULES:
+- Use ONLY the text given in the Context below.
+- Do NOT add your own interpretations, psychology, modern explanations, or extra ideas.
+- Do NOT soften, expand, or "improve" the meaning. Preserve the original essence exactly.
+- Make the answer easy to read (short paragraphs, clear sentences) but stay faithful.
+- If the question spans multiple discourses, weave the relevant passages together without changing them.
+- Always name the discourse(s) you are drawing from.
 
 Context:
 {context}
 
-Question: {question}
+User question ({language}):
+{question}
 
-Answer with references:"""
-    )
-    response = (prompt | llm).invoke({"context": context, "question": state["question"]})
-    return {"answer": response.content}
-
-
-def decide_evidence(state: GraphState):
-    check = ChatPromptTemplate.from_template(
-        """Does this question or answer involve a specific historical claim, external story, or fact that would benefit from independent verification?
-Answer only YES or NO.
-
-Question: {question}
-Answer: {answer}"""
-    )
-    decision = (check | llm).invoke({
+Readable answer (faithful to the original text only):
+""")
+    chain = prompt | llm
+    resp = chain.invoke({
+        "context": context,
         "question": state["question"],
-        "answer": state.get("answer", "")[:600],
+        "language": state.get("language", "english"),
     })
-    return {"needs_evidence": "YES" in decision.content.upper()}
-
-
-def search_evidence(state: GraphState):
-    if not state.get("needs_evidence"):
-        return {"evidence": ""}
-    return {
-        "evidence": (
-            "[Evidence node] This claim may benefit from external verification. "
-            "Web search can be plugged in here later (Tavily / SerpAPI / etc.)."
-        )
-    }
+    return {"answer": resp.content}
 
 
 workflow = StateGraph(GraphState)
 workflow.add_node("retrieve", retrieve)
 workflow.add_node("generate", generate)
-workflow.add_node("decide_evidence", decide_evidence)
-workflow.add_node("search_evidence", search_evidence)
 workflow.set_entry_point("retrieve")
 workflow.add_edge("retrieve", "generate")
-workflow.add_edge("generate", "decide_evidence")
-workflow.add_edge("decide_evidence", "search_evidence")
-workflow.add_edge("search_evidence", END)
-app_graph = workflow.compile()
+workflow.add_edge("generate", END)
+graph = workflow.compile()
 
 # ---------- UI ----------
 st.title("🕉️ Osho Chatbot")
-st.markdown("Answers from your local Osho audio transcripts (or scraped data). Plays original audio when available.")
+st.caption("Faithful answers from original Osho discourse transcripts (English & Hindi)")
+
+lang = st.selectbox("Language", ["english", "hindi"], index=0)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if msg.get("sources"):
-            with st.expander("Sources & Audio"):
-                for src in msg["sources"]:
-                    st.markdown(f"**{src['title']}** ({src.get('language','')})")
-                    audio_path = src.get("local_audio")
-                    if audio_path and Path(audio_path).exists():
-                        st.audio(audio_path)
-                    elif src.get("audio_url"):
-                        st.markdown(f"[Audio]({src['audio_url']})")
-                    st.caption(src["snippet"])
-        if msg.get("evidence"):
-            with st.expander("External evidence"):
-                st.markdown(msg["evidence"])
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
+        if m.get("references"):
+            with st.expander("Original transcript references"):
+                for r in m["references"]:
+                    st.markdown(f"**{r['title']}**  \nSeries: {r.get('series','')}  \n[Link]({r['url']})")
+                    st.text(r["excerpt"])
+                    st.divider()
 
-if prompt := st.chat_input("Ask about a teaching or story..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+if q := st.chat_input("Ask a question..."):
+    st.session_state.messages.append({"role": "user", "content": q})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(q)
 
     with st.chat_message("assistant"):
-        with st.spinner("Searching discourses..."):
-            if vectorstore and llm:
-                result = app_graph.invoke({"question": prompt})
+        if not vectorstore or not llm:
+            st.error("Vector store or GROQ_API_KEY missing. Run scraper + index first.")
+        else:
+            with st.spinner("Retrieving..."):
+                result = graph.invoke({"question": q, "language": lang})
                 answer = result.get("answer", "")
-                sources = result.get("sources", [])
-                evidence = result.get("evidence", "")
+                refs = result.get("references", [])
 
+                st.markdown("**Answer**")
                 st.markdown(answer)
-                if sources:
-                    with st.expander("Sources & Audio"):
-                        for src in sources:
-                            st.markdown(f"**{src['title']}** ({src.get('language','')})")
-                            audio_path = src.get("local_audio")
-                            if audio_path and Path(audio_path).exists():
-                                st.audio(audio_path)
-                            elif src.get("audio_url"):
-                                st.markdown(f"[Play audio]({src['audio_url']})")
-                            st.caption(src["snippet"])
-                if evidence:
-                    with st.expander("External evidence"):
-                        st.markdown(evidence)
+
+                if refs:
+                    with st.expander("Original transcript references"):
+                        for r in refs:
+                            st.markdown(f"**{r['title']}**")
+                            if r.get("url"):
+                                st.markdown(f"[Open original discourse]({r['url']})")
+                            st.text(r["excerpt"])
+                            st.divider()
 
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": answer,
-                    "sources": sources,
-                    "evidence": evidence,
+                    "references": refs,
                 })
-            else:
-                st.error("Setup incomplete.")
