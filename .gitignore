@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.env
+data/vectorstore/
+data/full_corpus/
+*.faiss
+*.pkl
+.DS_Store
