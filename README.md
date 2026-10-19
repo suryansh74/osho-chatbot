@@ -1,60 +1,51 @@
 # Osho Chatbot (Personal)
 
-A personal web-based chatbot that answers questions from Osho's full discourse corpus (English + Hindi) on [oshoworld.com](https://oshoworld.com/).
+Personal RAG chatbot over Osho discourses.  
+Works with **your local audio collection** (recommended) or with transcripts scraped from oshoworld.com.
 
-It returns **source references** and the **original audio** (local playback or link). A LangGraph node can later decide to call web search for external evidence/verification of claims.
+## Quick start with your local audio (~55 GB)
 
-## Features
-- Full RAG over scraped transcripts
-- LangGraph pipeline: retrieve → generate → decide if evidence needed → search evidence (placeholder)
-- Original audio playback in the UI (after you download the MP3s)
-- Hindi + English support
-- Resumable scraper that can download **all** series, transcripts, and audio
-
-## Important
-This is for **personal use**. Full audio is very large (hundreds of GB). The scraper downloads everything locally to your machine. GitHub only holds the code.
-
-## Setup
-
-1. Clone and install:
+1. Install (inside the venv you already created):
    ```bash
-   git clone https://github.com/suryansh74/osho-chatbot.git
-   cd osho-chatbot
-   python -m venv venv
-   source venv/bin/activate
    pip install -r requirements.txt
-   playwright install chromium
    ```
 
-2. Set your Groq API key:
+2. Transcribe your local audio (this is the slow step):
    ```bash
-   export GROQ_API_KEY=your_key_here
+   python scripts/process_local_audio.py \
+     --audio-root "/path/to/your/osho/audio/folder" \
+     --output-dir data/local_corpus \
+     --model base \
+     --device cpu
    ```
+   - Use `--model small` or `medium` for better Hindi quality (slower).
+   - Use `--device cuda` if you have a GPU.
+   - The script is resumable.
 
-3. **Scrape all data** (this will take a long time and a lot of disk space):
-   ```bash
-   python scripts/scraper.py --download-audio --output-dir data/full_corpus
-   ```
-   - Remove `--download-audio` if you only want transcripts first.
-   - Use `--max-series 5` for a quick test.
-   - The script is resumable — you can stop and restart it.
-
-4. Index the transcripts:
+3. Build the vector store:
    ```bash
    python scripts/index_data.py
    ```
 
-5. Run the chatbot:
+4. Run:
    ```bash
    streamlit run app.py
    ```
 
-## Audio + Timestamps
-- The chatbot shows the relevant discourse title, original page link, and plays the local MP3 when available.
-- Exact sentence-level timestamps are not provided by the source site. The full original audio is served so you can listen from the start or scrub. Later you can add Whisper-based alignment if you want precise timestamps.
+The chatbot will cite the discourse and play the original local audio file when it finds a match.
 
-## Evidence / Web Search Node
-The graph already has a `decide_evidence` node that checks whether the question involves a historical or external claim worth verifying. The `search_evidence` node is currently a placeholder. You can later replace it with Tavily, SerpAPI, DuckDuckGo, or any search tool.
+## Alternative: scrape oshoworld.com for text
 
-## Disclaimer
-Unofficial personal project. Osho's teachings are copyrighted. Use only for your own study.
+If you prefer website transcripts (and optional audio download):
+```bash
+python scripts/scraper.py --download-audio --output-dir data/full_corpus
+python scripts/index_data.py
+```
+
+## Evidence node
+The LangGraph already has a decision node that can later call web search for external verification. It is currently a placeholder.
+
+## Notes
+- Full transcription of 55 GB takes time (hours to days depending on hardware).
+- `.amr` files are supported by faster-whisper.
+- Keep the audio files where they are; the chatbot uses the absolute paths stored in the JSON.

@@ -11,3 +11,4 @@ beautifulsoup4
 lxml
 tqdm
 playwright
+faster-whisper
