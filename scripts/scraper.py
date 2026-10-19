@@ -6,7 +6,9 @@ Saves clean transcripts into:
   data/hindi/<series_slug>/<discourse>.json
 
 Each JSON contains:
-  - title, url, language, transcript, series, duration (if available)
+  - title, url, language, transcript, series
+  - duration (HH:MM:SS or MM:SS when available)
+  - char_count, word_count (for later timestamp estimation)
 
 Resumable. Uses Playwright only for discovery of series/discourse lists,
 then requests + BeautifulSoup for the actual transcript pages.
@@ -116,30 +118,76 @@ def get_discourse_urls(page, series_url: str) -> list[str]:
     return urls
 
 
+def clean_transcript(text: str) -> str:
+    """Remove navigation, repeated blocks, and junk while keeping the real discourse."""
+    if not text:
+        return ""
+
+    # Common junk markers
+    junk_patterns = [
+        r"Home\s*/\s*Discourses.*",
+        r"UP NEXT.*",
+        r"SHOW MORE.*",
+        r"Language\s*:\s*english.*",
+        r"Share\s*Download.*",
+        r"Contact Us.*",
+        r"Privacy Policy.*",
+        r"Cookie.*",
+        r"Upcoming Events.*",
+        r"View all.*",
+        r"osho dham.*",
+        r"Login.*",
+    ]
+    for pat in junk_patterns:
+        text = re.sub(pat, "", text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Remove very short repeated lines and collapse whitespace
+    lines = [ln.strip() for ln in text.splitlines() if len(ln.strip()) > 40]
+    # Deduplicate consecutive identical lines
+    cleaned_lines = []
+    prev = None
+    for ln in lines:
+        if ln != prev:
+            cleaned_lines.append(ln)
+            prev = ln
+
+    result = "\n\n".join(cleaned_lines)
+    # Prefer content that starts with typical openings if present
+    openings = ["BELOVED OSHO", "BELOVED MASTER", "प्रिय ओशो", "प्रिय मास्टर"]
+    for op in openings:
+        idx = result.upper().find(op.upper())
+        if idx != -1 and idx < 500:
+            result = result[idx:]
+            break
+
+    return result.strip()
+
+
 def extract_transcript(soup: BeautifulSoup) -> str:
-    """Extract the main discourse text, filtering navigation and short noise."""
+    """Extract the main discourse text more carefully."""
+    # Try to find the largest continuous text block
     candidates = []
-    for tag in soup.find_all(["p", "div", "article", "section"]):
+    for tag in soup.find_all(["p", "div", "article", "section", "main"]):
         text = tag.get_text("\n", strip=True)
-        if len(text) < 200:
+        if len(text) < 300:
             continue
-        lower = text[:300].lower()
+        lower = text[:400].lower()
         if any(skip in lower for skip in [
-            "home\nosho", "login", "share", "contact us", "privacy policy",
-            "cookie", "osho dham", "upcoming events", "view all"
+            "home\n", "login", "share", "contact us", "privacy policy",
+            "cookie", "osho dham", "upcoming events", "view all", "up next"
         ]):
             continue
         candidates.append(text)
 
     if not candidates:
-        # Fallback: largest text block
         body = soup.get_text("\n", strip=True)
-        parts = [p.strip() for p in body.split("\n\n") if len(p.strip()) > 300]
-        return "\n\n".join(parts[:30])
+        parts = [p.strip() for p in re.split(r"\n\s*\n", body) if len(p.strip()) > 400]
+        raw = "\n\n".join(parts)
+    else:
+        candidates.sort(key=len, reverse=True)
+        raw = "\n\n".join(candidates[:12])
 
-    # Prefer longer, cleaner blocks
-    candidates.sort(key=len, reverse=True)
-    return "\n\n".join(candidates[:15])
+    return clean_transcript(raw)
 
 
 def scrape_one(url: str, language: str) -> dict | None:
@@ -153,14 +201,18 @@ def scrape_one(url: str, language: str) -> dict | None:
         title = re.sub(r"\s+", " ", title).strip()
 
         transcript = extract_transcript(soup)
-        if len(transcript) < 300:
+        if len(transcript) < 400:
             return None
 
-        # Try to get duration if present
+        # Duration extraction
         duration = None
-        duration_match = re.search(r"(\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2})", soup.get_text())
-        if duration_match:
-            duration = duration_match.group(1)
+        full_text = soup.get_text()
+        dur_match = re.search(r"(\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2})", full_text)
+        if dur_match:
+            duration = dur_match.group(1)
+
+        char_count = len(transcript)
+        word_count = len(transcript.split())
 
         return {
             "title": title,
@@ -168,6 +220,8 @@ def scrape_one(url: str, language: str) -> dict | None:
             "language": language,
             "transcript": transcript,
             "duration": duration,
+            "char_count": char_count,
+            "word_count": word_count,
         }
     except Exception as e:
         print(f"  Failed {url}: {e}")
