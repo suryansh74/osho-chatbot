@@ -1,58 +1,60 @@
-# Osho Chatbot
+# Osho Chatbot (Personal)
 
-A web-based chatbot that answers questions using Osho's discourses and teachings from [oshoworld.com](https://oshoworld.com/), with source references.
+A personal web-based chatbot that answers questions from Osho's full discourse corpus (English + Hindi) on [oshoworld.com](https://oshoworld.com/).
 
-Built with:
-- **RAG** (Retrieval-Augmented Generation)
-- **LangGraph** for the agent flow
-- **Groq** API for fast LLM inference (Llama models)
-- **Streamlit** for the web interface
-- Local embeddings via Sentence Transformers + FAISS
+It returns **source references** and the **original audio** (local playback or link). A LangGraph node can later decide to call web search for external evidence/verification of claims.
 
 ## Features
-- Answers based on actual Osho transcripts (Hindi & English)
-- Provides reference citations to specific discourses
-- Supports both English and Hindi queries (responses in the query language where possible)
+- Full RAG over scraped transcripts
+- LangGraph pipeline: retrieve → generate → decide if evidence needed → search evidence (placeholder)
+- Original audio playback in the UI (after you download the MP3s)
+- Hindi + English support
+- Resumable scraper that can download **all** series, transcripts, and audio
+
+## Important
+This is for **personal use**. Full audio is very large (hundreds of GB). The scraper downloads everything locally to your machine. GitHub only holds the code.
 
 ## Setup
 
-1. Clone the repo:
+1. Clone and install:
    ```bash
    git clone https://github.com/suryansh74/osho-chatbot.git
    cd osho-chatbot
-   ```
-
-2. Create a virtual environment and install dependencies:
-   ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   source venv/bin/activate
    pip install -r requirements.txt
+   playwright install chromium
    ```
 
-3. Set your Groq API key:
+2. Set your Groq API key:
    ```bash
-   export GROQ_API_KEY=your_groq_api_key_here
+   export GROQ_API_KEY=your_key_here
    ```
-   Or create a `.env` file with `GROQ_API_KEY=your_key`.
 
-4. (Optional) Scrape data:
-   The `scripts/scraper.py` can fetch transcripts. Run it after installing playwright if needed for full JS sites.
-   Sample data is included in `data/samples/`.
+3. **Scrape all data** (this will take a long time and a lot of disk space):
+   ```bash
+   python scripts/scraper.py --download-audio --output-dir data/full_corpus
+   ```
+   - Remove `--download-audio` if you only want transcripts first.
+   - Use `--max-series 5` for a quick test.
+   - The script is resumable — you can stop and restart it.
 
-5. Index the data (creates vector store):
+4. Index the transcripts:
    ```bash
    python scripts/index_data.py
    ```
 
-6. Run the chatbot:
+5. Run the chatbot:
    ```bash
    streamlit run app.py
    ```
 
-## Notes
-- Content is sourced from publicly available free resources on oshoworld.com. Please respect copyright and use for personal/educational purposes.
-- Full corpus is large (thousands of discourses). The scraper helps you download what you need.
-- Embeddings are computed locally (no extra API cost).
+## Audio + Timestamps
+- The chatbot shows the relevant discourse title, original page link, and plays the local MP3 when available.
+- Exact sentence-level timestamps are not provided by the source site. The full original audio is served so you can listen from the start or scrub. Later you can add Whisper-based alignment if you want precise timestamps.
+
+## Evidence / Web Search Node
+The graph already has a `decide_evidence` node that checks whether the question involves a historical or external claim worth verifying. The `search_evidence` node is currently a placeholder. You can later replace it with Tavily, SerpAPI, DuckDuckGo, or any search tool.
 
 ## Disclaimer
-This is an unofficial fan project. Osho's teachings are copyrighted. Always refer to official sources.
+Unofficial personal project. Osho's teachings are copyrighted. Use only for your own study.
