@@ -73,11 +73,17 @@ def estimate_timestamp(excerpt: str, full_char_count: int, duration: str) -> str
 def retrieve(state: GraphState):
     if not vectorstore:
         return {"documents": [], "references": []}
-    lang = state.get("language", "english")
-    docs = vectorstore.similarity_search(state["question"], k=6)
+
+    lang = state.get("language", "english").lower()
+    # Retrieve more candidates then strictly filter by language
+    docs = vectorstore.similarity_search(state["question"], k=12)
+
     filtered = [d for d in docs if d.metadata.get("language", "").lower() == lang]
+
+    # If nothing found for the selected language, do not fall back to the other language
     if not filtered:
-        filtered = docs
+        return {"documents": [], "references": []}
+
     refs = []
     for d in filtered[:4]:
         excerpt = d.page_content[:700] + ("..." if len(d.page_content) > 700 else "")
