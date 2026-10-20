@@ -43,7 +43,7 @@ class GraphState(TypedDict):
     references: List[dict]
 
 
-def estimate_timestamp(excerpt: str, full_char_count: int, duration: str) -> str:
+def estimate_timestamp(excerpt: str, full_char_count: int, duration: str, start_char: int = 0) -> str:
     """Rough timestamp estimate: position of excerpt / total chars * duration."""
     if not duration or not full_char_count or full_char_count <= 0:
         return ""
