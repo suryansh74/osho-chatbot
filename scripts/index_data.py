@@ -1,5 +1,5 @@
 """
-Index English and Hindi transcripts from data/english and data/hindi.
+Index English and Hindi transcripts with progress and incremental saving.
 """
 
 import json
@@ -10,8 +10,10 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+from tqdm import tqdm
 
 VECTORSTORE_PATH = "data/vectorstore"
+BATCH_SIZE = 500  # embed and add this many chunks at a time
 
 
 def load_documents():
@@ -46,19 +48,32 @@ def load_documents():
 def main():
     documents = load_documents()
     if not documents:
-        print("No transcripts found in data/english or data/hindi. Run the scraper first.")
+        print("No transcripts found in data/english or data/hindi.")
         return
 
     print(f"Loaded {len(documents)} discourses")
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     splits = splitter.split_documents(documents)
-    print(f"Chunks: {len(splits)}")
+    print(f"Total chunks: {len(splits)}")
 
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vs = FAISS.from_documents(splits, embeddings)
     os.makedirs(VECTORSTORE_PATH, exist_ok=True)
-    vs.save_local(VECTORSTORE_PATH)
-    print(f"Vector store saved to {VECTORSTORE_PATH}")
+
+    # Build in batches so progress is visible and index is saved incrementally
+    vs = None
+    for i in tqdm(range(0, len(splits), BATCH_SIZE), desc="Indexing batches"):
+        batch = splits[i:i + BATCH_SIZE]
+        if vs is None:
+            vs = FAISS.from_documents(batch, embeddings)
+        else:
+            vs.add_documents(batch)
+        # Save after every few batches
+        if (i // BATCH_SIZE) % 5 == 0:
+            vs.save_local(VECTORSTORE_PATH)
+
+    if vs:
+        vs.save_local(VECTORSTORE_PATH)
+        print(f"\nVector store saved to {VECTORSTORE_PATH}")
 
 
 if __name__ == "__main__":
