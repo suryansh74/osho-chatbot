@@ -16,7 +16,7 @@ st.set_page_config(page_title="Osho Chatbot", page_icon="🕉️", layout="wide"
 
 @st.cache_resource
 def load_vs():
-    emb = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    emb = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     try:
         return FAISS.load_local("data/vectorstore", emb, allow_dangerous_deserialization=True)
     except Exception:
@@ -98,6 +98,7 @@ def retrieve(state: GraphState):
             excerpt,
             d.metadata.get("char_count", 0),
             d.metadata.get("duration", ""),
+            d.metadata.get("start_char", 0),
         )
         refs.append({
             "title": d.metadata.get("title", ""),
