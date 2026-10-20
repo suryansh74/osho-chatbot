@@ -28,7 +28,7 @@ def get_llm():
     key = os.getenv("GROQ_API_KEY")
     if not key:
         return None
-    return ChatGroq(model="llama-3.1-8b-instant", temperature=0.1, api_key=key)
+    return ChatGroq(model="openai/gpt-oss-120b", temperature=0.1, api_key=key)
 
 
 vectorstore = load_vs()
