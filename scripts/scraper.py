@@ -270,7 +270,7 @@ def main():
                 series_list = series_list[: args.max_series]
 
             lang_dir = out / lang
-            lang_dir.mkdir(exist_ok=True)
+            lang_dir.mkdir(parents=True, exist_ok=True)
 
             for series in tqdm(series_list, desc=lang):
                 series_slug = re.sub(r"[^a-zA-Z0-9_-]", "_", series["url"].split("/")[-1])[:90]
