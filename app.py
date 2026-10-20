@@ -4,7 +4,7 @@ from typing import List, TypedDict
 import streamlit as st
 from dotenv import load_dotenv
 from langchain.prompts import ChatPromptTemplate
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
