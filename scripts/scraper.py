@@ -251,7 +251,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default="data")
     parser.add_argument("--max-series", type=int, default=None)
-    parser.add_argument("--languages", nargs="+", default=["english", "hindi"])
+    parser.add_argument("--languages", nargs="+", default=["hindi"],
+                        help="Languages to scrape. Default is only hindi (since english is already done).")
     args = parser.parse_args()
 
     out = Path(args.output_dir)
