@@ -75,12 +75,19 @@ def retrieve(state: GraphState):
         return {"documents": [], "references": []}
 
     lang = state.get("language", "english").lower()
-    # Retrieve more candidates then strictly filter by language
-    docs = vectorstore.similarity_search(state["question"], k=12)
+    question = state["question"]
 
+    # Search more candidates
+    docs = vectorstore.similarity_search(question, k=20)
+
+    # Strict language filter
     filtered = [d for d in docs if d.metadata.get("language", "").lower() == lang]
 
-    # If nothing found for the selected language, do not fall back to the other language
+    # If still nothing and language is hindi, try a second search with a broader query
+    if not filtered and lang == "hindi":
+        docs2 = vectorstore.similarity_search(question + " ओशो", k=15)
+        filtered = [d for d in docs2 if d.metadata.get("language", "").lower() == "hindi"]
+
     if not filtered:
         return {"documents": [], "references": []}
 
@@ -186,6 +193,10 @@ if q := st.chat_input("Ask a question..."):
                 result = graph.invoke({"question": q, "language": lang})
                 answer = result.get("answer", "")
                 refs = result.get("references", [])
+
+                if not refs and lang == "hindi":
+                    st.warning("No Hindi results found. Try asking the same question in Hindi, or check that Hindi transcripts were indexed.")
+                    answer = "No matching Hindi discourses were found for this query."
 
                 st.markdown("**Answer**")
                 st.markdown(answer)
