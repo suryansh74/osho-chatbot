@@ -1,7 +1,4 @@
-"""
-Index English and Hindi transcripts with progress and incremental saving.
-"""
-
+import argparse
 import json
 import os
 from pathlib import Path
@@ -13,10 +10,10 @@ from langchain_community.vectorstores import FAISS
 from tqdm import tqdm
 
 VECTORSTORE_PATH = "data/vectorstore"
-BATCH_SIZE = 500  # embed and add this many chunks at a time
+BATCH_SIZE = 500
 
 
-def load_documents():
+def load_documents(max_discourses: int | None = None):
     docs = []
     for lang in ["english", "hindi"]:
         lang_dir = Path("data") / lang
@@ -40,26 +37,37 @@ def load_documents():
                         "source_file": str(jf),
                     }
                 ))
+                if max_discourses and len(docs) >= max_discourses:
+                    return docs
             except Exception as e:
                 print(f"Skip {jf}: {e}")
     return docs
 
 
 def main():
-    documents = load_documents()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--chunk-size", type=int, default=2500,
+                        help="Larger = fewer chunks = much faster indexing (default 2500)")
+    parser.add_argument("--max-discourses", type=int, default=None,
+                        help="Limit number of discourses for a quick test")
+    args = parser.parse_args()
+
+    documents = load_documents(args.max_discourses)
     if not documents:
-        print("No transcripts found in data/english or data/hindi.")
+        print("No transcripts found.")
         return
 
     print(f"Loaded {len(documents)} discourses")
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=args.chunk_size,
+        chunk_overlap=200
+    )
     splits = splitter.split_documents(documents)
-    print(f"Total chunks: {len(splits)}")
+    print(f"Total chunks: {len(splits)} (chunk_size={args.chunk_size})")
 
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     os.makedirs(VECTORSTORE_PATH, exist_ok=True)
 
-    # Build in batches so progress is visible and index is saved incrementally
     vs = None
     for i in tqdm(range(0, len(splits), BATCH_SIZE), desc="Indexing batches"):
         batch = splits[i:i + BATCH_SIZE]
@@ -67,7 +75,6 @@ def main():
             vs = FAISS.from_documents(batch, embeddings)
         else:
             vs.add_documents(batch)
-        # Save after every few batches
         if (i // BATCH_SIZE) % 5 == 0:
             vs.save_local(VECTORSTORE_PATH)
 
