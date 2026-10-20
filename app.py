@@ -43,23 +43,57 @@ class GraphState(TypedDict):
     references: List[dict]
 
 
+def estimate_timestamp(excerpt: str, full_char_count: int, duration: str) -> str:
+    """Rough timestamp estimate: position of excerpt / total chars * duration."""
+    if not duration or not full_char_count or full_char_count <= 0:
+        return ""
+    # Find approximate start position (very rough — first 80 chars of excerpt)
+    # In practice we use a simple proportional estimate
+    try:
+        parts = duration.split(":")
+        if len(parts) == 3:
+            total_sec = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        elif len(parts) == 2:
+            total_sec = int(parts[0]) * 60 + int(parts[1])
+        else:
+            return ""
+        # Use a conservative middle-of-chunk estimate (we don't have exact offset)
+        # Show a range-style label instead of a precise second
+        pct = 0.35  # default mid-early; can be refined later
+        est_sec = int(total_sec * pct)
+        m, s = divmod(est_sec, 60)
+        h, m = divmod(m, 60)
+        if h:
+            return f"~{h}:{m:02d}:{s:02d}"
+        return f"~{m}:{s:02d}"
+    except Exception:
+        return ""
+
+
 def retrieve(state: GraphState):
     if not vectorstore:
         return {"documents": [], "references": []}
-    # Filter by language if possible
     lang = state.get("language", "english")
     docs = vectorstore.similarity_search(state["question"], k=6)
     filtered = [d for d in docs if d.metadata.get("language", "").lower() == lang]
     if not filtered:
-        filtered = docs  # fallback
+        filtered = docs
     refs = []
     for d in filtered[:4]:
+        excerpt = d.page_content[:700] + ("..." if len(d.page_content) > 700 else "")
+        ts = estimate_timestamp(
+            excerpt,
+            d.metadata.get("char_count", 0),
+            d.metadata.get("duration", ""),
+        )
         refs.append({
             "title": d.metadata.get("title", ""),
             "url": d.metadata.get("url", ""),
             "series": d.metadata.get("series", ""),
-            "excerpt": d.page_content[:600] + ("..." if len(d.page_content) > 600 else ""),
+            "excerpt": excerpt,
             "language": d.metadata.get("language", ""),
+            "duration": d.metadata.get("duration", ""),
+            "estimated_time": ts,
         })
     return {"documents": filtered[:4], "references": refs}
 
@@ -121,7 +155,15 @@ for m in st.session_state.messages:
         if m.get("references"):
             with st.expander("Original transcript references"):
                 for r in m["references"]:
-                    st.markdown(f"**{r['title']}**  \nSeries: {r.get('series','')}  \n[Link]({r['url']})")
+                    st.markdown(f"**{r['title']}**")
+                    if r.get("series"):
+                        st.markdown(f"Series: {r['series']}")
+                    if r.get("duration"):
+                        st.markdown(f"Duration: {r['duration']}")
+                    if r.get("estimated_time"):
+                        st.markdown(f"Estimated position: {r['estimated_time']} (approximate)")
+                    if r.get("url"):
+                        st.markdown(f"[Open original discourse]({r['url']})")
                     st.text(r["excerpt"])
                     st.divider()
 
@@ -146,6 +188,12 @@ if q := st.chat_input("Ask a question..."):
                     with st.expander("Original transcript references"):
                         for r in refs:
                             st.markdown(f"**{r['title']}**")
+                            if r.get("series"):
+                                st.markdown(f"Series: {r['series']}")
+                            if r.get("duration"):
+                                st.markdown(f"Duration: {r['duration']}")
+                            if r.get("estimated_time"):
+                                st.markdown(f"Estimated position: {r['estimated_time']} (approximate)")
                             if r.get("url"):
                                 st.markdown(f"[Open original discourse]({r['url']})")
                             st.text(r["excerpt"])

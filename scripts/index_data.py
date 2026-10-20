@@ -34,6 +34,7 @@ def load_documents():
                         "language": data.get("language", lang),
                         "series": data.get("series", ""),
                         "duration": data.get("duration", ""),
+                        "char_count": data.get("char_count", len(text)),
                         "source_file": str(jf),
                     }
                 ))
