@@ -99,23 +99,42 @@ def get_all_series(page, language: str) -> list[dict]:
     return unique
 
 
-def get_discourse_urls(page, series_url: str) -> list[str]:
+def get_discourse_urls(page, series_url: str) -> list[dict]:
+    """Return list of {url, duration} for discourses in a series."""
     page.goto(series_url, wait_until="networkidle", timeout=60000)
     page.wait_for_timeout(2000)
-    urls = page.evaluate("""() => {
+    items = page.evaluate("""() => {
         const out = [];
+        // Look for table rows or list items that contain both a link and a duration
         document.querySelectorAll('a[href]').forEach(a => {
             const href = a.href;
             if (!href || href.includes('#')) return;
             const slug = href.split('/').pop() || '';
-            // Discourse pages usually end with -01, -02, -1, etc.
-            if (/\\-\\d{1,3}$/.test(slug) && href.includes('oshoworld.com')) {
-                out.push(href.split('#')[0]);
+            if (!/\\-\\d{1,3}$/.test(slug)) return;
+
+            // Look nearby for duration like [01:42:15] or 01:42:15
+            let duration = null;
+            let el = a;
+            for (let i = 0; i < 5 && el; i++) {
+                const text = el.innerText || '';
+                const m = text.match(/\\[?(\\d{1,2}:\\d{2}:\\d{2}|\\d{1,2}:\\d{2})\\]?/);
+                if (m) {
+                    duration = m[1];
+                    break;
+                }
+                el = el.parentElement;
             }
+            out.push({url: href.split('#')[0], duration});
         });
-        return [...new Set(out)];
+        // Deduplicate by url
+        const seen = new Set();
+        return out.filter(item => {
+            if (seen.has(item.url)) return false;
+            seen.add(item.url);
+            return true;
+        });
     }""")
-    return urls
+    return items
 
 
 def clean_transcript(text: str) -> str:
@@ -257,19 +276,31 @@ def main():
                 series_path = lang_dir / series_slug
                 series_path.mkdir(exist_ok=True)
 
-                discourse_urls = get_discourse_urls(page, series["url"])
-                for d_url in discourse_urls:
+                discourse_items = get_discourse_urls(page, series["url"])
+                for item in discourse_items:
+                    d_url = item["url"]
+                    duration_from_list = item.get("duration")
                     slug = re.sub(r"[^a-zA-Z0-9_-]", "_", d_url.split("/")[-1])[:120]
                     json_path = series_path / f"{slug}.json"
                     if json_path.exists():
+                        # Optionally update duration if missing
+                        try:
+                            existing = json.loads(json_path.read_text(encoding="utf-8"))
+                            if not existing.get("duration") and duration_from_list:
+                                existing["duration"] = duration_from_list
+                                json_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+                        except Exception:
+                            pass
                         continue
 
                     data = scrape_one(d_url, lang)
                     if data:
                         data["series"] = series["title"]
+                        if duration_from_list and not data.get("duration"):
+                            data["duration"] = duration_from_list
                         with open(json_path, "w", encoding="utf-8") as f:
                             json.dump(data, f, ensure_ascii=False, indent=2)
-                    time.sleep(0.6)
+                    time.sleep(0.5)
 
         browser.close()
 
