@@ -77,33 +77,62 @@ def retrieve(state: GraphState):
     lang = state.get("language", "english").lower()
     question = state["question"].strip()
 
-    # For Hindi, also try a Devanagari-friendly expansion if the query looks Romanized
+    # Build search queries
     queries = [question]
     if lang == "hindi" and not any("\u0900" <= c <= "\u097F" for c in question):
-        # Simple expansions for common Romanized terms
-        expansions = [
-            question.replace("shashvat satya", "शाश्वत सत्य").replace("satya", "सत्य"),
-            question + " ओशो",
-            "शाश्वत सत्य" if "satya" in question.lower() or "shashvat" in question.lower() else question,
-        ]
-        queries.extend(expansions)
+        queries.append(question + " ओशो")
+        if "satya" in question.lower() or "सत्य" in question:
+            queries.append("शाश्वत सत्य")
+
+    # Extra boost for known series mentioned in the query
+    series_hints = []
+    q_lower = question.lower()
+    if "गीता" in question or "geeta" in q_lower or "gita" in q_lower:
+        series_hints.append("अष्टावक्र महागीता")
+        series_hints.append("ashtavakra")
+    if "सत्य" in question or "satya" in q_lower:
+        series_hints.append("सत्य")
 
     all_docs = []
     seen = set()
     for q in queries[:3]:
-        docs = vectorstore.similarity_search(q, k=15)
+        docs = vectorstore.similarity_search(q, k=20)
         for d in docs:
-            key = (d.metadata.get("url", ""), d.page_content[:100])
+            key = (d.metadata.get("url", ""), d.page_content[:80])
+            if key not in seen:
+                seen.add(key)
+                all_docs.append(d)
+
+    # Also search with series hints if present
+    for hint in series_hints:
+        docs = vectorstore.similarity_search(hint, k=8)
+        for d in docs:
+            key = (d.metadata.get("url", ""), d.page_content[:80])
             if key not in seen:
                 seen.add(key)
                 all_docs.append(d)
 
     filtered = [d for d in all_docs if d.metadata.get("language", "").lower() == lang]
-
     if not filtered:
         return {"documents": [], "references": []}
 
-    # Prefer unique discourses
+    # Simple boost: prefer docs whose title/series contain keywords from the query
+    def score(d):
+        title = (d.metadata.get("title") or "").lower()
+        series = (d.metadata.get("series") or "").lower()
+        text = d.page_content.lower()
+        s = 0
+        for word in question.lower().split():
+            if len(word) > 3:
+                if word in title or word in series:
+                    s += 3
+                if word in text:
+                    s += 1
+        return s
+
+    filtered.sort(key=score, reverse=True)
+
+    # Unique discourses
     unique = []
     seen_urls = set()
     for d in filtered:
