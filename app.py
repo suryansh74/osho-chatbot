@@ -142,14 +142,16 @@ def generate(state: GraphState):
         for d in state["documents"]
     )
     prompt = ChatPromptTemplate.from_template("""
-You are an Osho discourse assistant. Your only job is to present Osho's words clearly.
+You are an Osho discourse assistant. Present Osho's words clearly and simply.
 
 STRICT RULES:
 - Use ONLY the text given in the Context below.
 - Do NOT add your own interpretations, psychology, modern explanations, or extra ideas.
-- Do NOT soften, expand, or "improve" the meaning. Preserve the original essence exactly.
-- Make the answer easy to read (short paragraphs, clear sentences) but stay faithful.
-- If the question spans multiple discourses, weave the relevant passages together without changing them.
+- Do NOT change the original meaning. Preserve the essence exactly.
+- Use simple, everyday words so the answer is easy to understand.
+- Prefer short sentences and short paragraphs.
+- When you quote Osho, keep the quote and put it in a clear block.
+- If multiple discourses are relevant, connect them simply without adding new ideas.
 - Always name the discourse(s) you are drawing from.
 
 Context:
@@ -158,7 +160,7 @@ Context:
 User question ({language}):
 {question}
 
-Readable answer (faithful to the original text only):
+Clear and simple answer (faithful to the original text only):
 """)
     chain = prompt | llm
     resp = chain.invoke({
