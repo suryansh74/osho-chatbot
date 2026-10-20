@@ -75,24 +75,47 @@ def retrieve(state: GraphState):
         return {"documents": [], "references": []}
 
     lang = state.get("language", "english").lower()
-    question = state["question"]
+    question = state["question"].strip()
 
-    # Search more candidates
-    docs = vectorstore.similarity_search(question, k=20)
+    # For Hindi, also try a Devanagari-friendly expansion if the query looks Romanized
+    queries = [question]
+    if lang == "hindi" and not any("\u0900" <= c <= "\u097F" for c in question):
+        # Simple expansions for common Romanized terms
+        expansions = [
+            question.replace("shashvat satya", "शाश्वत सत्य").replace("satya", "सत्य"),
+            question + " ओशो",
+            "शाश्वत सत्य" if "satya" in question.lower() or "shashvat" in question.lower() else question,
+        ]
+        queries.extend(expansions)
 
-    # Strict language filter
-    filtered = [d for d in docs if d.metadata.get("language", "").lower() == lang]
+    all_docs = []
+    seen = set()
+    for q in queries[:3]:
+        docs = vectorstore.similarity_search(q, k=15)
+        for d in docs:
+            key = (d.metadata.get("url", ""), d.page_content[:100])
+            if key not in seen:
+                seen.add(key)
+                all_docs.append(d)
 
-    # If still nothing and language is hindi, try a second search with a broader query
-    if not filtered and lang == "hindi":
-        docs2 = vectorstore.similarity_search(question + " ओशो", k=15)
-        filtered = [d for d in docs2 if d.metadata.get("language", "").lower() == "hindi"]
+    filtered = [d for d in all_docs if d.metadata.get("language", "").lower() == lang]
 
     if not filtered:
         return {"documents": [], "references": []}
 
+    # Prefer unique discourses
+    unique = []
+    seen_urls = set()
+    for d in filtered:
+        url = d.metadata.get("url", "")
+        if url not in seen_urls:
+            seen_urls.add(url)
+            unique.append(d)
+        if len(unique) >= 4:
+            break
+
     refs = []
-    for d in filtered[:4]:
+    for d in unique:
         excerpt = d.page_content[:700] + ("..." if len(d.page_content) > 700 else "")
         ts = estimate_timestamp(
             excerpt,
@@ -109,7 +132,7 @@ def retrieve(state: GraphState):
             "duration": d.metadata.get("duration", ""),
             "estimated_time": ts,
         })
-    return {"documents": filtered[:4], "references": refs}
+    return {"documents": unique, "references": refs}
 
 
 def generate(state: GraphState):
