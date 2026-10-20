@@ -100,41 +100,78 @@ def get_all_series(page, language: str) -> list[dict]:
 
 
 def get_discourse_urls(page, series_url: str) -> list[dict]:
-    """Return list of {url, duration} for discourses in a series."""
+    """Return list of {url, duration} for all discourses in a series.
+    Handles pagination / show-more and also generates missing numbers from the series range.
+    """
     page.goto(series_url, wait_until="networkidle", timeout=60000)
-    page.wait_for_timeout(2000)
-    items = page.evaluate("""() => {
-        const out = [];
-        // Look for table rows or list items that contain both a link and a duration
-        document.querySelectorAll('a[href]').forEach(a => {
-            const href = a.href;
-            if (!href || href.includes('#')) return;
-            const slug = href.split('/').pop() || '';
-            if (!/\\-\\d{1,3}$/.test(slug)) return;
+    page.wait_for_timeout(2500)
 
-            // Look nearby for duration like [01:42:15] or 01:42:15
-            let duration = null;
-            let el = a;
-            for (let i = 0; i < 5 && el; i++) {
-                const text = el.innerText || '';
-                const m = text.match(/\\[?(\\d{1,2}:\\d{2}:\\d{2}|\\d{1,2}:\\d{2})\\]?/);
-                if (m) {
-                    duration = m[1];
-                    break;
+    all_items = []
+    seen = set()
+
+    def collect():
+        items = page.evaluate("""() => {
+            const out = [];
+            document.querySelectorAll('a[href]').forEach(a => {
+                const href = a.href;
+                if (!href || href.includes('#')) return;
+                const slug = href.split('/').pop() || '';
+                if (!/\\-\\d{1,3}$/.test(slug)) return;
+
+                let duration = null;
+                let el = a;
+                for (let i = 0; i < 6 && el; i++) {
+                    const text = (el.innerText || '');
+                    const m = text.match(/\\[?(\\d{1,2}:\\d{2}:\\d{2}|\\d{1,2}:\\d{2})\\]?/);
+                    if (m) { duration = m[1]; break; }
+                    el = el.parentElement;
                 }
-                el = el.parentElement;
-            }
-            out.push({url: href.split('#')[0], duration});
-        });
-        // Deduplicate by url
-        const seen = new Set();
-        return out.filter(item => {
-            if (seen.has(item.url)) return false;
-            seen.add(item.url);
-            return true;
-        });
-    }""")
-    return items
+                out.push({url: href.split('#')[0], duration});
+            });
+            return out;
+        }""")
+        for it in items:
+            if it["url"] not in seen:
+                seen.add(it["url"])
+                all_items.append(it)
+
+    collect()
+
+    # Try to click next / show more a few times
+    for _ in range(15):
+        clicked = page.evaluate("""() => {
+            const candidates = [...document.querySelectorAll('a, button, span, div')];
+            const next = candidates.find(el => {
+                const t = (el.innerText || '').trim().toLowerCase();
+                return (t === 'next' || t === '>' || t.includes('show more') || t.includes('load more'))
+                       && el.offsetParent !== null;
+            });
+            if (next) { next.click(); return true; }
+            return false;
+        }""")
+        if not clicked:
+            break
+        page.wait_for_timeout(1800)
+        collect()
+
+    # Fallback: if series URL contains a range like ...-01-32, generate the rest
+    range_match = re.search(r"-(\d+)-(\d+)$", series_url.rstrip("/"))
+    if range_match:
+        start, end = int(range_match.group(1)), int(range_match.group(2))
+        base = series_url.rstrip("/").rsplit("-", 2)[0]  # rough base
+        # Better base: remove the trailing -NN-NN
+        base = re.sub(r"-\d+-\d+$", "", series_url.rstrip("/"))
+        for n in range(start, end + 1):
+            # Try common patterns
+            for pattern in [f"{base}-{n:02d}", f"{base}-{n}", f"{base}-{n:03d}"]:
+                candidate = pattern
+                if candidate not in seen and "oshoworld.com" in series_url:
+                    # We only add the URL; duration will be filled later if possible
+                    all_items.append({"url": candidate, "duration": None})
+                    seen.add(candidate)
+                    break
+
+    return all_items
 
 
 def clean_transcript(text: str) -> str:
